@@ -1,3 +1,7 @@
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent / "src"))
 import streamlit as st
 import pandas as pd
 from pathlib import Path
