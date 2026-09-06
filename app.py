@@ -1,4 +1,4 @@
-⚽ FOOTSTATS TEST
+ FOOTSTATS TEST
 
 Home Team: [ Arsenal       ]
 Away Team: [ Chelsea       ]
