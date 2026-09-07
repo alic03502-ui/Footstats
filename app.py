@@ -145,11 +145,11 @@ model_df = model_df[
     model_df["date"] < prediction_date
 ].copy()
         prediction = predict_match_bayesian(
-            home_team,
-            away_team,
-            model_df,
-        )
-        # ─────────────────────────────────────────────
+    home_team,
+    away_team,
+    model_df
+)
+# ─────────────────────────────────────────────
 # TEAM HISTORY DEBUG
 # ─────────────────────────────────────────────
 
