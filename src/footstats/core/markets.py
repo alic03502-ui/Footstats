@@ -44,6 +44,7 @@ def build_market_catalog(
     bzz_odds: dict | None = None,
     rho: float = 0.0,
 ) -> list[dict]:
+    """
     Zwraca listę grup rynków: [{grupa, rynki: [{rynek, tip, szansa, kurs, zrodlo}]}].
     tip — format rozliczalny przez oblicz_tip_correct.
     """
