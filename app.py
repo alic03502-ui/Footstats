@@ -323,9 +323,12 @@ with st.spinner("Running the full FootStats engine..."):
     # -------------------------------------------------------------------------
 
     prediction = predict_match(
-        home_team,
-        away_team,
-        model_df,
+    home_team,
+    away_team,
+    model_df,
+    prediction_date=prediction_date,
+    use_xg=True,
+    use_calibration=True,
         importance_g=importance_home,
         importance_a=importance_away,
         heurystyka_g=fatigue_home,
