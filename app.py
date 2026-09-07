@@ -1,47 +1,74 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
-
-import streamlit as st
 import pandas as pd
+import streamlit as st
 
-from footstats.core.streamlit_engine import analyze_match
-from footstats.core.markets import build_market_catalog
+# -----------------------------------------------------------------------------
+# PROJECT PATH
+# -----------------------------------------------------------------------------
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+LOCAL_SRC = PROJECT_ROOT / "src"
+
+if LOCAL_SRC.exists():
+    sys.path.insert(0, str(LOCAL_SRC))
+
+# -----------------------------------------------------------------------------
+# FOOTSTATS CORE
+# -----------------------------------------------------------------------------
+
 from footstats.config import DC_RHO_CLASSIC
+from footstats.core.poisson import predict_match
+from footstats.core.poisson_bayesian import predict_match_bayesian
+from footstats.core.markets import build_market_catalog
+from footstats.core.bet_builder import get_betbuilder_suggestions
+from footstats.core.value_bet import calculate_ev, kelly_fraction
+from footstats.core.confidence import komentarz_analityka
+from footstats.core.h2h import AnalizaH2H
+from footstats.core.fatigue import HeurystaZmeczeniaRotacji
+from footstats.core.fortress import HomeFortress
+from footstats.core.classifier import KlasyfikatorMeczu
+from footstats.core.standings import table_asof, season_start_year
+from footstats.core.importance import ImportanceIndex
 
 
-# ---------------------------------------------------------
+# -----------------------------------------------------------------------------
 # PAGE
-# ---------------------------------------------------------
+# -----------------------------------------------------------------------------
 
 st.set_page_config(
-    page_title="FootStats Predictor",
-    page_icon="⚽",
+    page_title="FootStats Integrated Predictor",
+    page_icon="â½",
     layout="wide",
 )
 
-st.title("⚽ FootStats — Real Prediction Engine")
-st.caption("Bayesian Poisson + Dixon-Coles market engine")
+st.title("â½ FootStats â Integrated Prediction Engine")
+st.caption(
+    "Full FootStats Poisson + Dixon-Coles + xG + form + H2H + fatigue + fortress "
+    "+ markets + value analysis"
+)
 
 
-# ---------------------------------------------------------
-# LOAD HISTORICAL DATA
-# ---------------------------------------------------------
+# -----------------------------------------------------------------------------
+# DATA LOADER
+# -----------------------------------------------------------------------------
 
-@st.cache_data
-def load_data():
+@st.cache_data(show_spinner=False)
+def load_data() -> pd.DataFrame:
+    candidates = [
+        Path("data/hist_cache/full_dataset.parquet"),
+        PROJECT_ROOT / "data/hist_cache/full_dataset.parquet",
+    ]
 
-    path = Path("data/hist_cache/full_dataset.parquet")
-
-    if not path.exists():
+    path = next((p for p in candidates if p.exists()), None)
+    if path is None:
         raise FileNotFoundError(
-            f"Historical dataset not found: {path}"
+            "Historical dataset not found: data/hist_cache/full_dataset.parquet"
         )
 
-    df = pd.read_parquet(path)
+    df = pd.read_parquet(path).copy()
 
-    # Historical dataset → FootStats model schema
     df = df.rename(
         columns={
             "home": "gospodarz",
@@ -51,501 +78,699 @@ def load_data():
         }
     )
 
-    # Goals
-    df["gole_g"] = pd.to_numeric(
-        df["gole_g"],
-        errors="coerce",
-    )
+    required = ["gospodarz", "goscie", "gole_g", "gole_a", "date"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(
+            "Historical dataset is missing required columns: "
+            + ", ".join(missing)
+        )
 
-    df["gole_a"] = pd.to_numeric(
-        df["gole_a"],
-        errors="coerce",
-    )
+    df["gospodarz"] = df["gospodarz"].astype(str).str.strip()
+    df["goscie"] = df["goscie"].astype(str).str.strip()
+    df["gole_g"] = pd.to_numeric(df["gole_g"], errors="coerce")
+    df["gole_a"] = pd.to_numeric(df["gole_a"], errors="coerce")
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
-    # Dates
-    df["date"] = pd.to_datetime(
-        df["date"],
-        errors="coerce",
-    )
-
-    # Remove invalid rows
     df = df.dropna(
-        subset=[
-            "gospodarz",
-            "goscie",
-            "gole_g",
-            "gole_a",
-            "date",
-        ]
+        subset=["gospodarz", "goscie", "gole_g", "gole_a", "date"]
     )
-
-    # Important: keep historical data chronological
     df = df.sort_values("date").reset_index(drop=True)
+
+    # Some FootStats modules use the older Polish date column.
+    if "data" not in df.columns:
+        df["data"] = df["date"]
+
+    # Safe defaults for modules whose live datasets may contain these columns.
+    if "stage" not in df.columns:
+        df["stage"] = "REGULAR_SEASON"
 
     return df
 
 
-# ---------------------------------------------------------
-# LOAD DATA SAFELY
-# ---------------------------------------------------------
-
 try:
-
     df = load_data()
-
-except Exception as e:
-
-    st.error(
-        "Could not load the FootStats historical dataset."
-    )
-
-    st.exception(e)
-
+except Exception as exc:
+    st.error("Could not load the FootStats historical dataset.")
+    st.exception(exc)
     st.stop()
 
 
-# ---------------------------------------------------------
-# DATA STATUS
-# ---------------------------------------------------------
+# -----------------------------------------------------------------------------
+# SIDEBAR / MATCH SETUP
+# -----------------------------------------------------------------------------
 
-st.success(
-    f"Historical database loaded: {len(df):,} matches"
-)
+with st.sidebar:
+    st.header("âï¸ Match Setup")
 
-
-# ---------------------------------------------------------
-# LEAGUE SELECTION
-# ---------------------------------------------------------
-
-if "league" in df.columns:
-
-    leagues = sorted(
-        df["league"]
-        .dropna()
-        .astype(str)
-        .unique()
-        .tolist()
-    )
-
-else:
-
-    leagues = ["All leagues"]
-
-
-league = st.selectbox(
-    "League",
-    leagues,
-)
-
-
-# ---------------------------------------------------------
-# FILTER LEAGUE
-# ---------------------------------------------------------
-
-if league != "All leagues":
-
-    league_df = df[
-        df["league"].astype(str) == league
-    ].copy()
-
-else:
-
-    league_df = df.copy()
-
-
-# Keep filtered data chronological
-league_df = (
-    league_df
-    .sort_values("date")
-    .reset_index(drop=True)
-)
-
-
-# ---------------------------------------------------------
-# TEAM SELECTION
-# ---------------------------------------------------------
-
-teams = sorted(
-    set(
-        league_df["gospodarz"]
-        .dropna()
-        .astype(str)
-    ).union(
-        set(
-            league_df["goscie"]
-            .dropna()
-            .astype(str)
+    if "league" in df.columns:
+        leagues = sorted(
+            df["league"].dropna().astype(str).unique().tolist()
         )
-    )
-)
+    else:
+        leagues = ["All leagues"]
 
+    league = st.selectbox("League", leagues)
 
-if not teams:
+    if league == "All leagues":
+        league_df = df.copy()
+    else:
+        league_df = df[df["league"].astype(str) == league].copy()
 
-    st.error("No teams are available for the selected league.")
-    st.stop()
+    league_df = league_df.sort_values("date").reset_index(drop=True)
 
-
-col1, col2 = st.columns(2)
-
-
-with col1:
-
-    home_team = st.selectbox(
-        "Home Team",
-        teams,
-        index=0,
+    teams = sorted(
+        set(league_df["gospodarz"].astype(str))
+        | set(league_df["goscie"].astype(str))
     )
 
-
-with col2:
-
-    away_options = [
-        team
-        for team in teams
-        if team != home_team
-    ]
-
-    if not away_options:
-
-        st.error(
-            "There are not enough teams available "
-            "to select a different away team."
-        )
-
+    if not teams:
+        st.error("No teams are available for the selected league.")
         st.stop()
 
-    away_team = st.selectbox(
-        "Away Team",
-        away_options,
-        index=0,
+    home_team = st.selectbox("Home Team", teams)
+
+    away_options = [team for team in teams if team != home_team]
+    if not away_options:
+        st.error("There is no different away team available.")
+        st.stop()
+
+    away_team = st.selectbox("Away Team", away_options)
+
+    prediction_date = pd.Timestamp(
+        st.date_input(
+            "Match Date",
+            value=pd.Timestamp.today().date(),
+        )
+    )
+
+    stage_options = [
+        "REGULAR_SEASON",
+        "ROUND_OF_16",
+        "QUARTER_FINALS",
+        "SEMI_FINALS",
+        "FINAL",
+        "PLAYOFFS",
+    ]
+    stage = st.selectbox("Match Stage", stage_options)
+
+    use_xg = st.checkbox("Use Understat xG cache", value=True)
+    use_calibration = st.checkbox("Use FootStats Î» calibration", value=True)
+
+    st.divider()
+    predict_button = st.button(
+        "ð® RUN FULL PREDICTION",
+        type="primary",
+        use_container_width=True,
     )
 
 
-# ---------------------------------------------------------
-# MATCH DATE
-# ---------------------------------------------------------
+# -----------------------------------------------------------------------------
+# DATA STATUS
+# -----------------------------------------------------------------------------
 
-prediction_date = st.date_input(
-    "Match Date",
-    value=pd.Timestamp.today().date(),
-)
+st.success(f"Historical database loaded: {len(df):,} matches")
 
-
-# ---------------------------------------------------------
-# PREDICT BUTTON
-# ---------------------------------------------------------
-
-predict_button = st.button(
-    "🔮 Predict Match",
-    type="primary",
-    use_container_width=True,
-)
+if league != "All leagues":
+    st.info(f"Selected league: {league} Â· {len(league_df):,} matches")
 
 
-# =========================================================
-# RUN PREDICTION
-# =========================================================
+# -----------------------------------------------------------------------------
+# PREDICTION
+# -----------------------------------------------------------------------------
 
-if predict_button:
+if not predict_button:
+    st.markdown(
+        "### Ready\n"
+        "Choose the league, teams, date and match stage in the sidebar, "
+        "then press **RUN FULL PREDICTION**."
+    )
+    st.stop()
 
-    with st.spinner("Running FootStats model..."):
 
-        # -------------------------------------------------
-        # DATE
-        # -------------------------------------------------
+with st.spinner("Running the full FootStats engine..."):
+    # Strict pre-match cutoff. No match on or after the prediction date is used.
+    model_df = league_df[league_df["date"] < prediction_date].copy()
+    model_df = model_df.sort_values("date").reset_index(drop=True)
 
-        prediction_date = pd.Timestamp(
-            prediction_date
-        )
+    if model_df.empty:
+        st.error("No historical matches are available before the prediction date.")
+        st.stop()
 
-        # -------------------------------------------------
-        # HISTORICAL DATA CUTOFF
-        # -------------------------------------------------
+    # -------------------------------------------------------------------------
+    # CLASSIFIER
+    # -------------------------------------------------------------------------
 
-        model_df = league_df[
-            league_df["date"] < prediction_date
-        ].copy()
+    classifier_df = model_df.copy()
+    if "stage" not in classifier_df.columns:
+        classifier_df["stage"] = "REGULAR_SEASON"
 
-        model_df = (
-            model_df
-            .sort_values("date")
-            .reset_index(drop=True)
-        )
+    classifier = KlasyfikatorMeczu(
+        classifier_df,
+        kod_ligi=str(league) if league != "All leagues" else "",
+    )
 
-        # -------------------------------------------------
-        # VALIDATION
-        # -------------------------------------------------
+    classification = classifier.klasyfikuj(
+        home_team,
+        away_team,
+        stage,
+        str(prediction_date.date()),
+    )
 
-        if model_df.empty:
+    # -------------------------------------------------------------------------
+    # H2H
+    # -------------------------------------------------------------------------
 
-            st.error(
-                "No historical matches are available "
-                "before the selected prediction date."
-            )
+    h2h_engine = AnalizaH2H(model_df)
+    h2h_home = h2h_engine.analiza(
+        home_team,
+        away_team,
+        str(prediction_date.date()),
+    )
+    h2h_away = h2h_engine.analiza(
+        away_team,
+        home_team,
+        str(prediction_date.date()),
+    )
 
-            st.stop()
+    # -------------------------------------------------------------------------
+    # FATIGUE / ROTATION
+    # -------------------------------------------------------------------------
 
-        # -------------------------------------------------
-        # TEAM HISTORY
-        # -------------------------------------------------
+    fatigue_engine = HeurystaZmeczeniaRotacji(model_df)
+    fatigue_home = fatigue_engine.analiza(
+        home_team,
+        str(prediction_date.date()),
+    )
+    fatigue_away = fatigue_engine.analiza(
+        away_team,
+        str(prediction_date.date()),
+    )
 
-        home_history = model_df[
-            (
-                model_df["gospodarz"] == home_team
-            )
-            |
-            (
-                model_df["goscie"] == home_team
-            )
-        ].copy()
+    # -------------------------------------------------------------------------
+    # HOME FORTRESS
+    # -------------------------------------------------------------------------
 
-        away_history = model_df[
-            (
-                model_df["gospodarz"] == away_team
-            )
-            |
-            (
-                model_df["goscie"] == away_team
-            )
-        ].copy()
+    fortress_engine = HomeFortress(model_df)
+    fortress_home = fortress_engine.analiza(home_team)
 
-        # =================================================
-        # UNIFIED FOOTSTATS ENGINE
-        # =================================================
+    # -------------------------------------------------------------------------
+    # IMPORTANCE INDEX
+    # -------------------------------------------------------------------------
 
-        engine_result = analyze_match(
-            home_team=home_team,
-            away_team=away_team,
-            league_df=league_df,
-            prediction_date=prediction_date,
-        )
+    importance_home = None
+    importance_away = None
 
-        # Extract prediction
-        prediction = engine_result["prediction"]
-
-        # -------------------------------------------------
-        # PREDICTION VALIDATION
-        # -------------------------------------------------
-
-        if prediction is None:
-
-            st.error(
-                "The FootStats engine could not "
-                "generate a prediction."
-            )
-
-            st.stop()
-
-        # =================================================
-        # HISTORICAL DATA INFORMATION
-        # =================================================
-
-        st.subheader("📚 Historical Data Used")
-
-        h1, h2 = st.columns(2)
-
-        with h1:
-
-            st.metric(
-                "Home Team Historical Matches",
-                len(home_history),
-            )
-
-        with h2:
-
-            st.metric(
-                "Away Team Historical Matches",
-                len(away_history),
-            )
-
-        d1, d2 = st.columns(2)
-
-        with d1:
-
-            if not home_history.empty:
-
-                st.caption(
-                    f"{home_team}: "
-                    f"{home_history['date'].min().date()} "
-                    f"→ "
-                    f"{home_history['date'].max().date()}"
+    if "season" in model_df.columns and "league" in model_df.columns and league != "All leagues":
+        try:
+            season_values = model_df["season"].dropna().tolist()
+            if season_values:
+                latest_season = season_values[-1]
+                standings = table_asof(
+                    df,
+                    league,
+                    latest_season,
+                    prediction_date,
                 )
+                if standings is not None and not standings.empty:
+                    importance_engine = ImportanceIndex(
+                        standings,
+                        n_druzyn=len(standings),
+                    )
+                    importance_home = importance_engine.analiza(home_team)
+                    importance_away = importance_engine.analiza(away_team)
+        except Exception:
+            # Importance is an optional enrichment. The main model remains intact.
+            importance_home = None
+            importance_away = None
 
-        with d2:
+    if importance_home is None:
+        importance_home = {
+            "bonus_atak": 1.0,
+            "komentarz": "",
+            "status": "NORMAL",
+        }
 
-            if not away_history.empty:
+    if importance_away is None:
+        importance_away = {
+            "bonus_atak": 1.0,
+            "komentarz": "",
+            "status": "NORMAL",
+        }
 
-                st.caption(
-                    f"{away_team}: "
-                    f"{away_history['date'].min().date()} "
-                    f"→ "
-                    f"{away_history['date'].max().date()}"
-                )
+    # -------------------------------------------------------------------------
+    # FULL FOOTSTATS PREDICTION ENGINE
+    # -------------------------------------------------------------------------
 
-        st.info(
-            f"Prediction date: {prediction_date.date()}  |  "
-            f"League historical matches used: "
-            f"{len(model_df):,}  |  "
-            f"Latest eligible match: "
-            f"{model_df['date'].max().date()}"
+    prediction = predict_match(
+        home_team,
+        away_team,
+        model_df,
+        importance_g=importance_home,
+        importance_a=importance_away,
+        heurystyka_g=fatigue_home,
+        heurystyka_a=fatigue_away,
+        h2h_g=h2h_home,
+        h2h_a=h2h_away,
+        fortress_g=fortress_home,
+        stage=stage,
+        klasyfikacja=classification,
+        use_xg=use_xg,
+        use_calibration=use_calibration,
+    )
+
+    if prediction is None:
+        st.error(
+            "FootStats could not generate a prediction from the available history."
         )
+        st.stop()
 
-        # =================================================
-        # MAIN MODEL OUTPUT
-        # =================================================
+    # -------------------------------------------------------------------------
+    # SECONDARY BAYESIAN MODEL FOR DIAGNOSTICS
+    # -------------------------------------------------------------------------
 
-        st.divider()
-
-        st.header(
-            f"{home_team} vs {away_team}"
+    bayesian_prediction = None
+    try:
+        bayesian_prediction = predict_match_bayesian(
+            home_team,
+            away_team,
+            model_df,
         )
+    except Exception:
+        bayesian_prediction = None
 
-        # =================================================
-        # EXPECTED GOALS
-        # =================================================
+    # -------------------------------------------------------------------------
+    # MARKETS â SAME DIXON-COLES RHO AS THE MAIN ENGINE
+    # -------------------------------------------------------------------------
 
-        c1, c2, c3 = st.columns(3)
+    markets = build_market_catalog(
+        prediction["lambda_g"],
+        prediction["lambda_a"],
+        rho=DC_RHO_CLASSIC,
+    )
 
-        with c1:
+    # -------------------------------------------------------------------------
+    # BET BUILDER SUGGESTIONS
+    # -------------------------------------------------------------------------
 
-            st.metric(
-                "Home Expected Goals",
-                f"{prediction['lambda_g']:.2f}",
-            )
-
-        with c2:
-
-            st.metric(
-                "Away Expected Goals",
-                f"{prediction['lambda_a']:.2f}",
-            )
-
-        with c3:
-
-            total_xg = (
-                prediction["lambda_g"]
-                + prediction["lambda_a"]
-            )
-
-            st.metric(
-                "Expected Total Goals",
-                f"{total_xg:.2f}",
-            )
-
-                # =================================================
-        # 1X2
-        # =================================================
-
-        st.subheader("🎯 1X2")
-
-        c1, c2, c3 = st.columns(3)
-
-        with c1:
-
-            p = prediction.get(
-                "p_wygrana",
-                prediction.get("pw"),
-            )
-
-            if p is None:
-                st.error("Home win probability is missing.")
-                st.stop()
-
-            st.metric(
-                "1 — Home",
-                f"{p * 100:.1f}%",
-                (
-                    f"Fair {1 / p:.2f}"
-                    if p > 0
-                    else None
-                ),
-            )
-
-        with c2:
-
-            p = prediction.get(
-                "p_remis",
-                prediction.get("pr"),
-            )
-
-            if p is None:
-                st.error("Draw probability is missing.")
-                st.stop()
-
-            st.metric(
-                "X — Draw",
-                f"{p * 100:.1f}%",
-                (
-                    f"Fair {1 / p:.2f}"
-                    if p > 0
-                    else None
-                ),
-            )
-
-        with c3:
-
-            p = prediction.get(
-                "p_przegrana",
-                prediction.get("pa"),
-            )
-
-            if p is None:
-                st.error("Away win probability is missing.")
-                st.stop()
-
-            st.metric(
-                "2 — Away",
-                f"{p * 100:.1f}%",
-                (
-                    f"Fair {1 / p:.2f}"
-                    if p > 0
-                    else None
-                ),
-            )
-
-        # =================================================
-        # FULL MARKET CATALOG
-        # =================================================
-
-        st.divider()
-
-        st.header("📊 Betting Markets")
-
-        markets = build_market_catalog(
+    try:
+        betbuilder_suggestions = get_betbuilder_suggestions(
             prediction["lambda_g"],
             prediction["lambda_a"],
-            rho=DC_RHO_CLASSIC,
+        )
+    except Exception:
+        betbuilder_suggestions = []
+
+
+# -----------------------------------------------------------------------------
+# TOP SUMMARY
+# -----------------------------------------------------------------------------
+
+st.header(f"{home_team} vs {away_team}")
+
+if classification.get("etykieta_plain"):
+    st.caption(classification["etykieta_plain"])
+
+summary = st.columns(5)
+
+with summary[0]:
+    st.metric("Home Î»", f"{prediction['lambda_g']:.2f}")
+
+with summary[1]:
+    st.metric("Away Î»", f"{prediction['lambda_a']:.2f}")
+
+with summary[2]:
+    st.metric(
+        "Most Likely Score",
+        f"{prediction['wynik_g']}â{prediction['wynik_a']}",
+    )
+
+with summary[3]:
+    st.metric("BTTS", f"{prediction['btts']:.1f}%")
+
+with summary[4]:
+    st.metric("Over 2.5", f"{prediction['over25']:.1f}%")
+
+
+# -----------------------------------------------------------------------------
+# TABS
+# -----------------------------------------------------------------------------
+
+tab_prediction, tab_markets, tab_value, tab_analysis, tab_diagnostics = st.tabs(
+    [
+        "ð¯ Prediction",
+        "ð Markets",
+        "ð° Value / Kelly",
+        "ð§  Match Analysis",
+        "ð¬ Diagnostics",
+    ]
+)
+
+
+# -----------------------------------------------------------------------------
+# PREDICTION TAB
+# -----------------------------------------------------------------------------
+
+with tab_prediction:
+    st.subheader("1X2")
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        p = prediction["p_wygrana"]
+        st.metric(
+            "1 â Home",
+            f"{p:.1f}%",
+            f"Fair {100 / p:.2f}" if p > 0 else None,
         )
 
-        for group in markets:
+    with c2:
+        p = prediction["p_remis"]
+        st.metric(
+            "X â Draw",
+            f"{p:.1f}%",
+            f"Fair {100 / p:.2f}" if p > 0 else None,
+        )
 
-            st.subheader(
-                group["grupa"]
+    with c3:
+        p = prediction["p_przegrana"]
+        st.metric(
+            "2 â Away",
+            f"{p:.1f}%",
+            f"Fair {100 / p:.2f}" if p > 0 else None,
+        )
+
+    st.subheader("Top 5 exact scores")
+
+    score_rows = []
+    for score, probability in prediction.get("top5", []):
+        score_rows.append(
+            {
+                "Score": score.replace(":", "â"),
+                "Probability": f"{probability:.1f}%",
+            }
+        )
+
+    if score_rows:
+        st.dataframe(
+            pd.DataFrame(score_rows),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    st.subheader("Model confidence")
+    st.progress(
+        max(0.0, min(float(prediction.get("pewnosc", 0)) / 100.0, 1.0))
+    )
+    st.write(f"Confidence: **{prediction.get('pewnosc', 0)}%**")
+
+    st.info(komentarz_analityka(prediction))
+
+
+# -----------------------------------------------------------------------------
+# MARKETS TAB
+# -----------------------------------------------------------------------------
+
+with tab_markets:
+    st.subheader("Full FootStats Market Catalog")
+    st.caption(
+        f"Market probabilities are generated from Î» using DC rho = {DC_RHO_CLASSIC:.4f}."
+    )
+
+    for group in markets:
+        st.markdown(f"### {group['grupa']}")
+
+        rows = []
+        for market in group["rynki"]:
+            rows.append(
+                {
+                    "Market": market["rynek"],
+                    "Tip": market["tip"],
+                    "Probability": f"{market['szansa']:.1f}%",
+                    "Fair Odds": f"{market['kurs']:.2f}",
+                    "Source": market["zrodlo"],
+                }
             )
 
-            rows = []
+        if rows:
+            st.dataframe(
+                pd.DataFrame(rows),
+                use_container_width=True,
+                hide_index=True,
+            )
 
-            for market in group["rynki"]:
+    st.divider()
+    st.subheader("BetBuilder suggestions")
 
-                rows.append(
-                    {
-                        "Market": market["rynek"],
-                        "Tip": market["tip"],
-                        "Probability": (
-                            f"{market['szansa']:.1f}%"
-                        ),
-                        "Fair Odds": (
-                            f"{market['kurs']:.2f}"
-                        ),
-                        "Source": market["zrodlo"],
-                    }
-                )
+    if betbuilder_suggestions:
+        for suggestion in betbuilder_suggestions:
+            st.write(f"â¢ {suggestion}")
+    else:
+        st.info("The existing BetBuilder module returned no qualifying suggestions.")
 
-            if rows:
 
-                st.dataframe(
-                    pd.DataFrame(rows),
-                    use_container_width=True,
-                    hide_index=True,
-                )                
+# -----------------------------------------------------------------------------
+# VALUE / KELLY TAB
+# -----------------------------------------------------------------------------
+
+with tab_value:
+    st.subheader("Bookmaker Odds â EV â Kelly")
+    st.caption(
+        "Enter real bookmaker odds. EV and Kelly are calculated by the existing FootStats value module."
+    )
+
+    odds_c1, odds_c2, odds_c3 = st.columns(3)
+
+    with odds_c1:
+        home_odds = st.number_input("Home (1) odds", min_value=1.01, value=2.00, step=0.01)
+
+    with odds_c2:
+        draw_odds = st.number_input("Draw (X) odds", min_value=1.01, value=3.50, step=0.01)
+
+    with odds_c3:
+        away_odds = st.number_input("Away (2) odds", min_value=1.01, value=3.50, step=0.01)
+
+    odds_rows = [
+        ("1 â Home", prediction["p_wygrana"] / 100.0, home_odds),
+        ("X â Draw", prediction["p_remis"] / 100.0, draw_odds),
+        ("2 â Away", prediction["p_przegrana"] / 100.0, away_odds),
+    ]
+
+    value_rows = []
+    for name, probability, odds in odds_rows:
+        ev = calculate_ev(probability, float(odds))
+        kelly = kelly_fraction(probability, float(odds)) * 100.0
+        value_rows.append(
+            {
+                "Market": name,
+                "Model Probability": f"{probability * 100:.1f}%",
+                "Odds": f"{odds:.2f}",
+                "Fair Odds": f"{1 / probability:.2f}" if probability > 0 else "â",
+                "EV": f"{ev:+.2f}%",
+                "Kelly": f"{kelly:.2f}%",
+                "Value": "YES" if ev >= 3.0 and kelly >= 1.0 else "NO",
+            }
+        )
+
+    st.dataframe(
+        pd.DataFrame(value_rows),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.warning(
+        "Kelly is a mathematical sizing output, not a guarantee of profit. "
+        "Use conservative fractional Kelly if you actually stake money."
+    )
+
+
+# -----------------------------------------------------------------------------
+# MATCH ANALYSIS TAB
+# -----------------------------------------------------------------------------
+
+with tab_analysis:
+    st.subheader("Historical / Context Analysis")
+
+    a1, a2, a3 = st.columns(3)
+
+    with a1:
+        st.metric("Home historical matches", int(
+            ((model_df["gospodarz"] == home_team) | (model_df["goscie"] == home_team)).sum()
+        ))
+
+    with a2:
+        st.metric("Away historical matches", int(
+            ((model_df["gospodarz"] == away_team) | (model_df["goscie"] == away_team)).sum()
+        ))
+
+    with a3:
+        st.metric("H2H matches, 24 months", int(h2h_home.get("n_h2h", 0)))
+
+    st.subheader("Form / team strength")
+
+    strength_rows = [
+        {
+            "Team": home_team,
+            "Attack": prediction["sila_at_g"],
+            "Defense": prediction["sila_ob_g"],
+            "Form points/match": prediction["forma_g"],
+        },
+        {
+            "Team": away_team,
+            "Attack": prediction["sila_at_a"],
+            "Defense": prediction["sila_ob_a"],
+            "Form points/match": prediction["forma_a"],
+        },
+    ]
+
+    st.dataframe(
+        pd.DataFrame(strength_rows),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.subheader("H2H")
+    h2h_c1, h2h_c2 = st.columns(2)
+
+    with h2h_c1:
+        st.write(f"**{home_team}**")
+        st.write(f"Patent: {bool(h2h_home.get('patent'))}")
+        st.write(f"Zemsta: {bool(h2h_home.get('zemsta'))}")
+        st.write(f"H2H confidence: {h2h_home.get('pewnosc', 20)}%")
+        if h2h_home.get("opis"):
+            st.caption(h2h_home["opis"])
+
+    with h2h_c2:
+        st.write(f"**{away_team}**")
+        st.write(f"Patent: {bool(h2h_away.get('patent'))}")
+        st.write(f"Zemsta: {bool(h2h_away.get('zemsta'))}")
+        st.write(f"H2H confidence: {h2h_away.get('pewnosc', 20)}%")
+        if h2h_away.get("opis"):
+            st.caption(h2h_away["opis"])
+
+    st.subheader("Fatigue / rotation")
+    fatigue_rows = [
+        {
+            "Team": home_team,
+            "Rotation": bool(fatigue_home.get("rotacja")),
+            "Fatigue": bool(fatigue_home.get("zmeczenie")),
+            "Attack multiplier": fatigue_home.get("mnoznik_atak", 1.0),
+            "Defense multiplier": fatigue_home.get("mnoznik_obr", 1.0),
+        },
+        {
+            "Team": away_team,
+            "Rotation": bool(fatigue_away.get("rotacja")),
+            "Fatigue": bool(fatigue_away.get("zmeczenie")),
+            "Attack multiplier": fatigue_away.get("mnoznik_atak", 1.0),
+            "Defense multiplier": fatigue_away.get("mnoznik_obr", 1.0),
+        },
+    ]
+    st.dataframe(
+        pd.DataFrame(fatigue_rows),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.subheader("Home fortress")
+    st.write(
+        f"{home_team}: "
+        f"{'ACTIVE' if fortress_home.get('fortress') else 'inactive'} Â· "
+        f"unbeaten home streak = {fortress_home.get('seria', 0)}"
+    )
+    if fortress_home.get("opis"):
+        st.info(fortress_home["opis"])
+
+    if classification.get("opis"):
+        st.subheader("Match classification")
+        st.info(classification["opis"])
+
+    h2h_df = h2h_home.get("h2h_df")
+    if isinstance(h2h_df, pd.DataFrame) and not h2h_df.empty:
+        st.subheader("Recent H2H results")
+        display_cols = [
+            c for c in ["date", "data", "gospodarz", "goscie", "gole_g", "gole_a"]
+            if c in h2h_df.columns
+        ]
+        if display_cols:
+            st.dataframe(
+                h2h_df[display_cols].sort_values(
+                    display_cols[0], ascending=False
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+
+# -----------------------------------------------------------------------------
+# DIAGNOSTICS TAB
+# -----------------------------------------------------------------------------
+
+with tab_diagnostics:
+    st.subheader("Model diagnostics")
+
+    diag_rows = [
+        {"Component": "Main engine", "Status": "ACTIVE", "Details": "core.poisson.predict_match"},
+        {"Component": "Dixon-Coles", "Status": "ACTIVE", "Details": f"rho={DC_RHO_CLASSIC:.4f}"},
+        {"Component": "Î» calibration", "Status": "ON" if use_calibration else "OFF", "Details": "lambda_optimizer"},
+        {"Component": "Understat xG cache", "Status": "ON" if use_xg else "OFF", "Details": "cache-only; no live request"},
+        {"Component": "H2H", "Status": "ACTIVE", "Details": f"{h2h_home.get('n_h2h', 0)} recent matches"},
+        {"Component": "Fatigue/rotation", "Status": "ACTIVE", "Details": "pre-match history only"},
+        {"Component": "Home fortress", "Status": "ACTIVE", "Details": f"streak={fortress_home.get('seria', 0)}"},
+        {"Component": "Importance", "Status": "ACTIVE" if prediction.get("imp_g", {}).get("status") != "NORMAL" or prediction.get("imp_a", {}).get("status") != "NORMAL" else "NORMAL", "Details": "standings-as-of-date when season data exists"},
+        {"Component": "Market catalog", "Status": "ACTIVE", "Details": f"{sum(len(g['rynki']) for g in markets)} markets"},
+        {"Component": "Value / Kelly", "Status": "ACTIVE", "Details": "core.value_bet"},
+    ]
+
+    st.dataframe(
+        pd.DataFrame(diag_rows),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    if bayesian_prediction:
+        st.subheader("Secondary Bayesian model")
+        comparison_rows = [
+            {
+                "Metric": "Home Î»",
+                "Full FootStats": prediction["lambda_g"],
+                "Bayesian": bayesian_prediction["lambda_g"],
+            },
+            {
+                "Metric": "Away Î»",
+                "Full FootStats": prediction["lambda_a"],
+                "Bayesian": bayesian_prediction["lambda_a"],
+            },
+            {
+                "Metric": "Home win",
+                "Full FootStats": prediction["p_wygrana"],
+                "Bayesian": bayesian_prediction["pw"] * 100,
+            },
+            {
+                "Metric": "Draw",
+                "Full FootStats": prediction["p_remis"],
+                "Bayesian": bayesian_prediction["pr"] * 100,
+            },
+            {
+                "Metric": "Away win",
+                "Full FootStats": prediction["p_przegrana"],
+                "Bayesian": bayesian_prediction["pa"] * 100,
+            },
+        ]
+        st.dataframe(
+            pd.DataFrame(comparison_rows),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    st.subheader("No-lookahead information")
+    st.write(
+        f"Prediction date: **{prediction_date.date()}**  |  "
+        f"Latest eligible historical match: **{model_df['date'].max().date()}**  |  "
+        f"Historical matches supplied to engine: **{len(model_df):,}**"
+    )
+
+    st.warning(
+        "Important: this dashboard exposes the existing FootStats modules; it does not "
+        "invent bookmaker odds, injuries, lineups, referee data or Bzzoiro probabilities "
+        "when those inputs are not present in the selected historical dataset."
+    )
