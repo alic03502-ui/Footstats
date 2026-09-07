@@ -120,6 +120,10 @@ with col2:
         away_options,
         index=0,
     )
+    prediction_date = st.date_input(
+    "Match Date",
+    value=pd.Timestamp.today().date()
+)
 # ---------------------------------------------------------
 # PREDICT
 # ---------------------------------------------------------
@@ -133,11 +137,61 @@ if predict_button:
         # Only use matches before the prediction.
         # The current dataset contains historical completed matches.
         model_df = league_df.copy()
+        prediction_date = pd.Timestamp(prediction_date)
+
+model_df["date"] = pd.to_datetime(model_df["date"], errors="coerce")
+
+model_df = model_df[
+    model_df["date"] < prediction_date
+].copy()
         prediction = predict_match_bayesian(
             home_team,
             away_team,
             model_df,
         )
+        # ─────────────────────────────────────────────
+# TEAM HISTORY DEBUG
+# ─────────────────────────────────────────────
+
+home_history = model_df[
+    (model_df["home"] == home_team) |
+    (model_df["away"] == home_team)
+].copy()
+
+away_history = model_df[
+    (model_df["home"] == away_team) |
+    (model_df["away"] == away_team)
+].copy()
+
+st.subheader("Historical Data Used")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.metric(
+        "Home Team Historical Matches",
+        len(home_history)
+    )
+
+with col2:
+    st.metric(
+        "Away Team Historical Matches",
+        len(away_history)
+    )
+
+if not home_history.empty:
+    st.caption(
+        f"{home_team}: "
+        f"{home_history['date'].min().date()} → "
+        f"{home_history['date'].max().date()}"
+    )
+
+if not away_history.empty:
+    st.caption(
+        f"{away_team}: "
+        f"{away_history['date'].min().date()} → "
+        f"{away_history['date'].max().date()}"
+    )
     # -----------------------------------------------------
     # CHECK MODEL RESULT
     # -----------------------------------------------------
