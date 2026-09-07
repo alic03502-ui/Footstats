@@ -1,13 +1,15 @@
 """
 Streamlit integration engine.
 
-This module connects the existing Footstats prediction components
-into one clean interface for the Streamlit application.
+Connects the existing Footstats prediction engine
+to the Streamlit application.
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+from footstats.core.poisson_bayesian import predict_match_bayesian
 
 
 def analyze_match(
@@ -19,14 +21,16 @@ def analyze_match(
     """
     Main entry point for Streamlit.
 
-    All existing Footstats model components will be connected here
-    incrementally. The current working prediction remains the baseline.
+    Uses only historical matches before the prediction date.
     """
 
     if league_df is None:
         raise ValueError("Historical league data is required.")
 
-    # Never allow future matches to enter the prediction.
+    # -------------------------------------------------
+    # PREVENT FUTURE-DATA LEAKAGE
+    # -------------------------------------------------
+
     model_df = league_df[
         league_df["date"] < prediction_date
     ].copy()
@@ -36,10 +40,41 @@ def analyze_match(
             "No historical matches available before the prediction date."
         )
 
+    # -------------------------------------------------
+    # EXISTING FOOTSTATS BAYESIAN MODEL
+    # -------------------------------------------------
+
+    prediction = predict_match_bayesian(
+        home_team,
+        away_team,
+        model_df,
+    )
+
+    # -------------------------------------------------
+    # RETURN ONE CLEAN OBJECT TO STREAMLIT
+    # -------------------------------------------------
+
     return {
         "home_team": home_team,
         "away_team": away_team,
         "prediction_date": prediction_date,
+
         "historical_matches": len(model_df),
-        "status": "engine_ready",
-    }
+
+        "prediction": prediction,
+
+        "lambda_home": prediction["lambda_g"],
+        "lambda_away": prediction["lambda_a"],
+
+        "home_probability": prediction["pw"],
+        "draw_probability": prediction["pr"],
+        "away_probability": prediction["pa"],
+
+        "home_matches_used": prediction["n_home"],
+        "away_matches_used": prediction["n_away"],
+
+        "model": prediction.get(
+            "model",
+            "Bayesian Poisson",
+        ),
+    }    }
