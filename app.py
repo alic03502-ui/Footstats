@@ -338,8 +338,6 @@ with st.spinner("Running the full FootStats engine..."):
         fortress_g=fortress_home,
         stage=stage,
         klasyfikacja=classification,
-        use_xg=use_xg,
-        use_calibration=use_calibration,
     )
 
     if prediction is None:
