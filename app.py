@@ -443,7 +443,7 @@ if predict_button:
 
         with c1:
 
-            p = prediction["pw"]
+            p = prediction["p_wygrana"]
 
             st.metric(
                 "1 — Home",
@@ -457,7 +457,7 @@ if predict_button:
 
         with c2:
 
-            p = prediction["pr"]
+            p = prediction["p_remis"]
 
             st.metric(
                 "X — Draw",
@@ -471,7 +471,7 @@ if predict_button:
 
         with c3:
 
-            p = prediction["pa"]
+            p = prediction["p_przegrana"]
 
             st.metric(
                 "2 — Away",
@@ -527,4 +527,5 @@ if predict_button:
                     pd.DataFrame(rows),
                     use_container_width=True,
                     hide_index=True,
+                )                    hide_index=True,
                 )
