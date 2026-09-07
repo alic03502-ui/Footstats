@@ -361,12 +361,13 @@ def predict_match(
         else:
             _now = _dt.now()
             _season = _now.year if _now.month >= 7 else _now.year - 1
-            xg_h = _cache_get(_to_slug(g), _season) or {}
-            xg_a = _cache_get(_to_slug(a), _season) or {}
-            _XG_W = 0.20
 
-            h_xgf, h_xga = xg_h.get("xg_for_avg"), xg_h.get("xga_avg")
-            a_xgf, a_xga = xg_a.get("xg_for_avg"), xg_a.get("xga_avg")
+        xg_h = _cache_get(_to_slug(g), _season) or {}
+        xg_a = _cache_get(_to_slug(a), _season) or {}
+        _XG_W = 0.20
+
+        h_xgf, h_xga = xg_h.get("xg_for_avg"), xg_h.get("xga_avg")
+        a_xgf, a_xga = xg_a.get("xg_for_avg"), xg_a.get("xga_avg")
 
             # Gospodarz strzela: jego atak vs obrona gościa
             if h_xgf and h_xgf > 0:
