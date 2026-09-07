@@ -536,7 +536,8 @@ if predict_button:
                     "model",
                     "Bayesian Poisson",
                 ),
-            )        st.metric(
+            )        
+            st.metric(
             "Model",
             "Bayesian Poisson",
         )
