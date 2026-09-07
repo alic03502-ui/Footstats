@@ -21,9 +21,7 @@ st.set_page_config(
 )
 
 st.title("⚽ FootStats — Real Prediction Engine")
-st.caption(
-    "Bayesian Poisson + Dixon-Coles market engine"
-)
+st.caption("Bayesian Poisson + Dixon-Coles market engine")
 
 
 # ---------------------------------------------------------
@@ -33,21 +31,16 @@ st.caption(
 @st.cache_data
 def load_data():
 
-    path = Path(
-        "data/hist_cache/full_dataset.parquet"
-    )
+    path = Path("data/hist_cache/full_dataset.parquet")
 
     if not path.exists():
-
         raise FileNotFoundError(
             f"Historical dataset not found: {path}"
         )
 
     df = pd.read_parquet(path)
 
-    # Adapter:
-    # historical dataset → FootStats model schema
-
+    # Historical dataset → FootStats model schema
     df = df.rename(
         columns={
             "home": "gospodarz",
@@ -58,7 +51,6 @@ def load_data():
     )
 
     # Goals
-
     df["gole_g"] = pd.to_numeric(
         df["gole_g"],
         errors="coerce",
@@ -70,14 +62,12 @@ def load_data():
     )
 
     # Dates
-
     df["date"] = pd.to_datetime(
         df["date"],
         errors="coerce",
     )
 
     # Remove invalid rows
-
     df = df.dropna(
         subset=[
             "gospodarz",
@@ -87,6 +77,9 @@ def load_data():
             "date",
         ]
     )
+
+    # Important: keep historical data chronological
+    df = df.sort_values("date").reset_index(drop=True)
 
     return df
 
@@ -115,8 +108,7 @@ except Exception as e:
 # ---------------------------------------------------------
 
 st.success(
-    f"Historical database loaded: "
-    f"{len(df):,} matches"
+    f"Historical database loaded: {len(df):,} matches"
 )
 
 
@@ -160,6 +152,14 @@ else:
     league_df = df.copy()
 
 
+# Keep filtered data chronological
+league_df = (
+    league_df
+    .sort_values("date")
+    .reset_index(drop=True)
+)
+
+
 # ---------------------------------------------------------
 # TEAM SELECTION
 # ---------------------------------------------------------
@@ -177,6 +177,12 @@ teams = sorted(
         )
     )
 )
+
+
+if not teams:
+
+    st.error("No teams are available for the selected league.")
+    st.stop()
 
 
 col1, col2 = st.columns(2)
@@ -198,6 +204,15 @@ with col2:
         for team in teams
         if team != home_team
     ]
+
+    if not away_options:
+
+        st.error(
+            "There are not enough teams available "
+            "to select a different away team."
+        )
+
+        st.stop()
 
     away_team = st.selectbox(
         "Away Team",
@@ -233,9 +248,7 @@ predict_button = st.button(
 
 if predict_button:
 
-    with st.spinner(
-        "Running FootStats model..."
-    ):
+    with st.spinner("Running FootStats model..."):
 
         # -------------------------------------------------
         # DATE
@@ -252,6 +265,12 @@ if predict_button:
         model_df = league_df[
             league_df["date"] < prediction_date
         ].copy()
+
+        model_df = (
+            model_df
+            .sort_values("date")
+            .reset_index(drop=True)
+        )
 
         # -------------------------------------------------
         # VALIDATION
@@ -272,30 +291,26 @@ if predict_button:
 
         home_history = model_df[
             (
-                model_df["gospodarz"]
-                == home_team
+                model_df["gospodarz"] == home_team
             )
             |
             (
-                model_df["goscie"]
-                == home_team
+                model_df["goscie"] == home_team
             )
         ].copy()
 
         away_history = model_df[
             (
-                model_df["gospodarz"]
-                == away_team
+                model_df["gospodarz"] == away_team
             )
             |
             (
-                model_df["goscie"]
-                == away_team
+                model_df["goscie"] == away_team
             )
         ].copy()
 
         # =================================================
-        # NEW UNIFIED FOOTSTATS ENGINE
+        # UNIFIED FOOTSTATS ENGINE
         # =================================================
 
         engine_result = analyze_match(
@@ -305,14 +320,11 @@ if predict_button:
             prediction_date=prediction_date,
         )
 
-        # Extract prediction from engine
-
-        prediction = engine_result[
-            "prediction"
-        ]
+        # Extract prediction
+        prediction = engine_result["prediction"]
 
         # -------------------------------------------------
-        # VALIDATION
+        # PREDICTION VALIDATION
         # -------------------------------------------------
 
         if prediction is None:
@@ -328,9 +340,7 @@ if predict_button:
         # HISTORICAL DATA INFORMATION
         # =================================================
 
-        st.subheader(
-            "📚 Historical Data Used"
-        )
+        st.subheader("📚 Historical Data Used")
 
         h1, h2 = st.columns(2)
 
@@ -373,8 +383,7 @@ if predict_button:
                 )
 
         st.info(
-            f"Prediction date: "
-            f"{prediction_date.date()}  |  "
+            f"Prediction date: {prediction_date.date()}  |  "
             f"League historical matches used: "
             f"{len(model_df):,}  |  "
             f"Latest eligible match: "
@@ -427,9 +436,7 @@ if predict_button:
         # 1X2
         # =================================================
 
-        st.subheader(
-            "🎯 1X2"
-        )
+        st.subheader("🎯 1X2")
 
         c1, c2, c3 = st.columns(3)
 
@@ -481,9 +488,7 @@ if predict_button:
 
         st.divider()
 
-        st.header(
-            "📊 Betting Markets"
-        )
+        st.header("📊 Betting Markets")
 
         markets = build_market_catalog(
             prediction["lambda_g"],
@@ -523,36 +528,37 @@ if predict_button:
                     hide_index=True,
                 )
 
-     # =================================================
-# ENGINE INFORMATION
-# =================================================
+        # =================================================
+        # ENGINE INFORMATION
+        # =================================================
 
-st.divider()
+        st.divider()
 
-st.subheader(
-    "🧠 FootStats Engine"
-)
+        st.subheader("🧠 FootStats Engine")
 
-info1, info2, info3 = st.columns(3)
+        info1, info2, info3 = st.columns(3)
 
-with info1:
-    st.metric(
-        "Historical Matches",
-        engine_result["historical_matches"],
-    )
+        with info1:
 
-with info2:
-    st.metric(
-        "Home Matches Used",
-        engine_result["home_matches_used"],
-    )
+            st.metric(
+                "Historical Matches",
+                engine_result["historical_matches"],
+            )
 
-with info3:
-    st.metric(
-        "Away Matches Used",
-        engine_result["away_matches_used"],
-    )
+        with info2:
 
-st.caption(
-    "Prediction generated through the FootStats unified engine."
-)
+            st.metric(
+                "Home Matches Used",
+                engine_result["home_matches_used"],
+            )
+
+        with info3:
+
+            st.metric(
+                "Away Matches Used",
+                engine_result["away_matches_used"],
+            )
+
+        st.caption(
+            "Prediction generated through the FootStats unified engine."
+        )
