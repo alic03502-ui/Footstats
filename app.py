@@ -527,5 +527,3 @@ if predict_button:
                     use_container_width=True,
                     hide_index=True,
                 )
-
-        
