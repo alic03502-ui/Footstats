@@ -38,12 +38,16 @@ def _fair(prob: float) -> float:
     return max(1.01, round(1.0 / prob, 2))
 
 
-def build_market_catalog(lh: float, la: float, bzz_odds: dict | None = None) -> list[dict]:
-    """
+def build_market_catalog(
+    lh: float,
+    la: float,
+    bzz_odds: dict | None = None,
+    rho: float = 0.0,
+) -> list[dict]:
     Zwraca listę grup rynków: [{grupa, rynki: [{rynek, tip, szansa, kurs, zrodlo}]}].
     tip — format rozliczalny przez oblicz_tip_correct.
     """
-    mat = probability_matrix(lh, la)
+    mat = probability_matrix(lh, la, rho=rho)
     bzz = bzz_odds or {}
 
     def entry(rynek: str, tip: str, prob: float) -> dict:
