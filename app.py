@@ -20,6 +20,9 @@ if LOCAL_SRC.exists():
 
 from footstats.config import DC_RHO_CLASSIC
 from footstats.core.poisson import predict_match
+import inspect
+
+st.write("PREDICT_MATCH FILE:", inspect.getsourcefile(predict_match))
 from footstats.core.poisson_bayesian import predict_match_bayesian
 from footstats.core.markets import build_market_catalog
 from footstats.core.bet_builder import get_betbuilder_suggestions
