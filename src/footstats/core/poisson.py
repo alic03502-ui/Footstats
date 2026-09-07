@@ -190,6 +190,7 @@ def _kanoniczne_nazwy(df_mecze: pd.DataFrame, g: str, a: str) -> tuple[str, str]
 def predict_match(
     g: str, a: str,
     df_mecze: pd.DataFrame,
+    prediction_date=None,
     importance_g: dict = None,
     importance_a: dict = None,
     heurystyka_g: dict = None,
@@ -346,10 +347,20 @@ def predict_match(
     # λ_dom = atak gospodarza (xGF) ZDERZONY z obroną gościa (xGA): (xGF_h + xGA_a)/2.
     # Wcześniej brano tylko xGF własny — ignorowało słabość/siłę obrony rywala.
     if use_xg:
-        try:
-            from footstats.scrapers.understat_xg import _cache_get, _to_slug
-            from datetime import datetime as _dt
-            _season = _dt.now().year if _dt.now().month >= 7 else _dt.now().year - 1
+    try:
+        from footstats.scrapers.understat_xg import _cache_get, _to_slug
+        from datetime import datetime as _dt
+
+        if prediction_date is not None:
+            _prediction_dt = pd.to_datetime(prediction_date)
+            _season = (
+                _prediction_dt.year
+                if _prediction_dt.month >= 7
+                else _prediction_dt.year - 1
+            )
+        else:
+            _now = _dt.now()
+            _season = _now.year if _now.month >= 7 else _now.year - 1
             xg_h = _cache_get(_to_slug(g), _season) or {}
             xg_a = _cache_get(_to_slug(a), _season) or {}
             _XG_W = 0.20
