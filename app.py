@@ -203,9 +203,10 @@ if predict_button:
     st.divider()
     st.header("📊 Betting Markets")
     markets = build_market_catalog(
-        prediction["lambda_g"],
-        prediction["lambda_a"],
-    )
+    prediction["lambda_g"],
+    prediction["lambda_a"],
+    rho=0.0,
+)
     for group in markets:
         st.subheader(
             group["grupa"]
