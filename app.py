@@ -433,7 +433,7 @@ if predict_button:
                 f"{total_xg:.2f}",
             )
 
-        # =================================================
+                # =================================================
         # 1X2
         # =================================================
 
@@ -443,7 +443,14 @@ if predict_button:
 
         with c1:
 
-            p = prediction["p_wygrana"]
+            p = prediction.get(
+                "p_wygrana",
+                prediction.get("pw"),
+            )
+
+            if p is None:
+                st.error("Home win probability is missing.")
+                st.stop()
 
             st.metric(
                 "1 — Home",
@@ -457,7 +464,14 @@ if predict_button:
 
         with c2:
 
-            p = prediction["p_remis"]
+            p = prediction.get(
+                "p_remis",
+                prediction.get("pr"),
+            )
+
+            if p is None:
+                st.error("Draw probability is missing.")
+                st.stop()
 
             st.metric(
                 "X — Draw",
@@ -471,7 +485,14 @@ if predict_button:
 
         with c3:
 
-            p = prediction["p_przegrana"]
+            p = prediction.get(
+                "p_przegrana",
+                prediction.get("pa"),
+            )
+
+            if p is None:
+                st.error("Away win probability is missing.")
+                st.stop()
 
             st.metric(
                 "2 — Away",
