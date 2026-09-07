@@ -132,23 +132,29 @@ predict_button = st.button(
     type="primary",
     use_container_width=True,
 )
+
 if predict_button:
     with st.spinner("Running FootStats model..."):
-        # Only use matches before the prediction.
+        # Only use matches before the prediction date.
         # The current dataset contains historical completed matches.
         model_df = league_df.copy()
+
         prediction_date = pd.Timestamp(prediction_date)
 
-model_df["date"] = pd.to_datetime(model_df["date"], errors="coerce")
+        model_df["date"] = pd.to_datetime(
+            model_df["date"],
+            errors="coerce"
+        )
 
-model_df = model_df[
-    model_df["date"] < prediction_date
-].copy()
+        model_df = model_df[
+            model_df["date"] < prediction_date
+        ].copy()
+
         prediction = predict_match_bayesian(
-    home_team,
-    away_team,
-    model_df
-)
+            home_team,
+            away_team,
+            model_df
+        )
 # ─────────────────────────────────────────────
 # TEAM HISTORY DEBUG
 # ─────────────────────────────────────────────
