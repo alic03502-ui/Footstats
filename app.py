@@ -8,6 +8,7 @@ import pandas as pd
 
 from footstats.core.streamlit_engine import analyze_match
 from footstats.core.markets import build_market_catalog
+from footstats.config import DC_RHO_CLASSIC
 
 
 # ---------------------------------------------------------
@@ -493,7 +494,7 @@ if predict_button:
         markets = build_market_catalog(
             prediction["lambda_g"],
             prediction["lambda_a"],
-            rho=0.0,
+            rho=DC_RHO_CLASSIC,
         )
 
         for group in markets:
