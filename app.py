@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 import streamlit as st
 import pandas as pd
 
-from footstats.core.poisson_bayesian import predict_match_bayesian
+from footstats.core.streamlit_engine import analyze_match
 from footstats.core.markets import build_market_catalog
 
 
@@ -21,7 +21,9 @@ st.set_page_config(
 )
 
 st.title("⚽ FootStats — Real Prediction Engine")
-st.caption("Bayesian Poisson + Dixon-Coles market engine")
+st.caption(
+    "Bayesian Poisson + Dixon-Coles market engine"
+)
 
 
 # ---------------------------------------------------------
@@ -30,16 +32,22 @@ st.caption("Bayesian Poisson + Dixon-Coles market engine")
 
 @st.cache_data
 def load_data():
-    path = Path("data/hist_cache/full_dataset.parquet")
+
+    path = Path(
+        "data/hist_cache/full_dataset.parquet"
+    )
 
     if not path.exists():
+
         raise FileNotFoundError(
             f"Historical dataset not found: {path}"
         )
 
     df = pd.read_parquet(path)
 
-    # Adapter: historical loader → Bayesian model schema
+    # Adapter:
+    # historical dataset → FootStats model schema
+
     df = df.rename(
         columns={
             "home": "gospodarz",
@@ -49,7 +57,8 @@ def load_data():
         }
     )
 
-    # Make sure goals are numeric
+    # Goals
+
     df["gole_g"] = pd.to_numeric(
         df["gole_g"],
         errors="coerce",
@@ -60,11 +69,14 @@ def load_data():
         errors="coerce",
     )
 
-    # Make sure dates are valid
+    # Dates
+
     df["date"] = pd.to_datetime(
         df["date"],
         errors="coerce",
     )
+
+    # Remove invalid rows
 
     df = df.dropna(
         subset=[
@@ -79,14 +91,22 @@ def load_data():
     return df
 
 
+# ---------------------------------------------------------
+# LOAD DATA SAFELY
+# ---------------------------------------------------------
+
 try:
+
     df = load_data()
 
 except Exception as e:
+
     st.error(
         "Could not load the FootStats historical dataset."
     )
+
     st.exception(e)
+
     st.stop()
 
 
@@ -95,7 +115,8 @@ except Exception as e:
 # ---------------------------------------------------------
 
 st.success(
-    f"Historical database loaded: {len(df):,} matches"
+    f"Historical database loaded: "
+    f"{len(df):,} matches"
 )
 
 
@@ -114,6 +135,7 @@ if "league" in df.columns:
     )
 
 else:
+
     leagues = ["All leagues"]
 
 
@@ -123,7 +145,9 @@ league = st.selectbox(
 )
 
 
-# Filter league
+# ---------------------------------------------------------
+# FILTER LEAGUE
+# ---------------------------------------------------------
 
 if league != "All leagues":
 
@@ -193,7 +217,7 @@ prediction_date = st.date_input(
 
 
 # ---------------------------------------------------------
-# PREDICT
+# PREDICT BUTTON
 # ---------------------------------------------------------
 
 predict_button = st.button(
@@ -203,27 +227,34 @@ predict_button = st.button(
 )
 
 
+# =========================================================
+# RUN PREDICTION
+# =========================================================
+
 if predict_button:
 
-    with st.spinner("Running FootStats model..."):
+    with st.spinner(
+        "Running FootStats model..."
+    ):
 
-        # Create a separate dataframe for this prediction.
-        # This prevents modifying the original cached dataset.
-        model_df = league_df.copy()
+        # -------------------------------------------------
+        # DATE
+        # -------------------------------------------------
 
         prediction_date = pd.Timestamp(
             prediction_date
         )
 
-        # Only allow matches played BEFORE
-        # the match being predicted.
-        model_df = model_df[
-            model_df["date"] < prediction_date
+        # -------------------------------------------------
+        # HISTORICAL DATA CUTOFF
+        # -------------------------------------------------
+
+        model_df = league_df[
+            league_df["date"] < prediction_date
         ].copy()
 
-
         # -------------------------------------------------
-        # DATA VALIDATION
+        # VALIDATION
         # -------------------------------------------------
 
         if model_df.empty:
@@ -234,7 +265,6 @@ if predict_button:
             )
 
             st.stop()
-
 
         # -------------------------------------------------
         # TEAM HISTORY
@@ -252,7 +282,6 @@ if predict_button:
             )
         ].copy()
 
-
         away_history = model_df[
             (
                 model_df["gospodarz"]
@@ -265,44 +294,45 @@ if predict_button:
             )
         ].copy()
 
+        # =================================================
+        # NEW UNIFIED FOOTSTATS ENGINE
+        # =================================================
 
-        # -------------------------------------------------
-        # PREDICTION
-        # -------------------------------------------------
-
-        prediction = predict_match_bayesian(
-            home_team,
-            away_team,
-            model_df,
+        engine_result = analyze_match(
+            home_team=home_team,
+            away_team=away_team,
+            league_df=league_df,
+            prediction_date=prediction_date,
         )
 
+        # Extract prediction from engine
+
+        prediction = engine_result[
+            "prediction"
+        ]
 
         # -------------------------------------------------
-        # CHECK MODEL RESULT
+        # VALIDATION
         # -------------------------------------------------
 
         if prediction is None:
 
             st.error(
-                "The model could not generate a prediction. "
-                "The selected teams may not have enough "
-                "historical data."
+                "The FootStats engine could not "
+                "generate a prediction."
             )
 
             st.stop()
 
-
-        # -------------------------------------------------
+        # =================================================
         # HISTORICAL DATA INFORMATION
-        # -------------------------------------------------
+        # =================================================
 
         st.subheader(
             "📚 Historical Data Used"
         )
 
-
         h1, h2 = st.columns(2)
-
 
         with h1:
 
@@ -311,7 +341,6 @@ if predict_button:
                 len(home_history),
             )
 
-
         with h2:
 
             st.metric(
@@ -319,9 +348,7 @@ if predict_button:
                 len(away_history),
             )
 
-
         d1, d2 = st.columns(2)
-
 
         with d1:
 
@@ -334,7 +361,6 @@ if predict_button:
                     f"{home_history['date'].max().date()}"
                 )
 
-
         with d2:
 
             if not away_history.empty:
@@ -346,19 +372,18 @@ if predict_button:
                     f"{away_history['date'].max().date()}"
                 )
 
-
         st.info(
-            f"Prediction date: {prediction_date.date()}  |  "
+            f"Prediction date: "
+            f"{prediction_date.date()}  |  "
             f"League historical matches used: "
             f"{len(model_df):,}  |  "
             f"Latest eligible match: "
             f"{model_df['date'].max().date()}"
         )
 
-
-        # -------------------------------------------------
+        # =================================================
         # MAIN MODEL OUTPUT
-        # -------------------------------------------------
+        # =================================================
 
         st.divider()
 
@@ -366,13 +391,11 @@ if predict_button:
             f"{home_team} vs {away_team}"
         )
 
-
-        # -------------------------------------------------
+        # =================================================
         # EXPECTED GOALS
-        # -------------------------------------------------
+        # =================================================
 
         c1, c2, c3 = st.columns(3)
-
 
         with c1:
 
@@ -381,7 +404,6 @@ if predict_button:
                 f"{prediction['lambda_g']:.2f}",
             )
 
-
         with c2:
 
             st.metric(
@@ -389,24 +411,27 @@ if predict_button:
                 f"{prediction['lambda_a']:.2f}",
             )
 
-
         with c3:
+
+            total_xg = (
+                prediction["lambda_g"]
+                + prediction["lambda_a"]
+            )
 
             st.metric(
                 "Expected Total Goals",
-                f"{prediction['lambda_g'] + prediction['lambda_a']:.2f}",
+                f"{total_xg:.2f}",
             )
 
-
-        # -------------------------------------------------
+        # =================================================
         # 1X2
-        # -------------------------------------------------
+        # =================================================
 
-        st.subheader("🎯 1X2")
-
+        st.subheader(
+            "🎯 1X2"
+        )
 
         c1, c2, c3 = st.columns(3)
-
 
         with c1:
 
@@ -415,11 +440,12 @@ if predict_button:
             st.metric(
                 "1 — Home",
                 f"{p * 100:.1f}%",
-                f"Fair {1 / p:.2f}"
-                if p > 0
-                else None,
+                (
+                    f"Fair {1 / p:.2f}"
+                    if p > 0
+                    else None
+                ),
             )
-
 
         with c2:
 
@@ -428,11 +454,12 @@ if predict_button:
             st.metric(
                 "X — Draw",
                 f"{p * 100:.1f}%",
-                f"Fair {1 / p:.2f}"
-                if p > 0
-                else None,
+                (
+                    f"Fair {1 / p:.2f}"
+                    if p > 0
+                    else None
+                ),
             )
-
 
         with c3:
 
@@ -441,27 +468,28 @@ if predict_button:
             st.metric(
                 "2 — Away",
                 f"{p * 100:.1f}%",
-                f"Fair {1 / p:.2f}"
-                if p > 0
-                else None,
+                (
+                    f"Fair {1 / p:.2f}"
+                    if p > 0
+                    else None
+                ),
             )
 
-
-        # -------------------------------------------------
+        # =================================================
         # FULL MARKET CATALOG
-        # -------------------------------------------------
+        # =================================================
 
         st.divider()
 
-        st.header("📊 Betting Markets")
-
+        st.header(
+            "📊 Betting Markets"
+        )
 
         markets = build_market_catalog(
             prediction["lambda_g"],
             prediction["lambda_a"],
             rho=0.0,
         )
-
 
         for group in markets:
 
@@ -470,7 +498,6 @@ if predict_button:
             )
 
             rows = []
-
 
             for market in group["rynki"]:
 
@@ -488,7 +515,6 @@ if predict_button:
                     }
                 )
 
-
             if rows:
 
                 st.dataframe(
@@ -497,52 +523,49 @@ if predict_button:
                     hide_index=True,
                 )
 
-
-        # -------------------------------------------------
-        # MODEL INFORMATION
-        # -------------------------------------------------
+        # =================================================
+        # ENGINE INFORMATION
+        # =================================================
 
         st.divider()
 
         st.subheader(
-            "🧠 Model Information"
+            "🧠 FootStats Engine"
         )
 
-
         info1, info2, info3 = st.columns(3)
-
 
         with info1:
 
             st.metric(
-                "Home Historical Matches",
-                prediction["n_home"],
+                "Historical Matches",
+                engine_result[
+                    "historical_matches"
+                ],
             )
-
 
         with info2:
 
             st.metric(
-                "Away Historical Matches",
-                prediction["n_away"],
+                "Home Matches Used",
+                engine_result[
+                    "home_matches_used"
+                ],
             )
-
 
         with info3:
 
             st.metric(
-                "Model",
-                prediction.get(
-                    "model",
-                    "Bayesian Poisson",
-                ),
-            )        
-            st.metric(
-            "Model",
-            "Bayesian Poisson",
-        )
-    st.caption(
-        "Probabilities are generated by the FootStats "
+                "Away Matches Used",
+                engine_result[
+                    "away_matches_used"
+                ],
+            )
+
+        st.caption(
+            "Prediction generated through the "
+            "FootStats unified engine."
+        )        "Probabilities are generated by the FootStats "
         "Bayesian Poisson engine. Markets are derived "
         "from the resulting goal probability matrix."
     )
