@@ -528,34 +528,4 @@ if predict_button:
                     hide_index=True,
                 )
 
-        # =================================================
-        # ENGINE INFORMATION
-        # =================================================
-
-        st.divider()
-
-        st.subheader("🧠 FootStats Engine")
-
-        info1, info2, info3 = st.columns(3)
-
-        with info1:
-            st.metric(
-                "Historical Matches",
-                engine_result["historical_matches"],
-            )
-
-        with info2:
-            st.metric(
-                "Home Matches Used",
-                engine_result["home_matches_used"],
-            )
-
-        with info3:
-            st.metric(
-                "Away Matches Used",
-                engine_result["away_matches_used"],
-            )
-
-        st.caption(
-            "Prediction generated through the FootStats unified engine."
-        )
+        
